@@ -20,53 +20,82 @@ remove(install.lib, lib, load.lib)
 set.seed(20250324)
 
 ###############################################################################
-# Understanding the metropolis algorithm for a simple Bayesian regression model
+# Set the function to simulate the data
 ###############################################################################
-set.seed(42)
 
-# Simulate Data
-n <- 1000
-p <- 2
-X <- cbind(1, rnorm(n))  # Design matrix with intercept
-beta_true <- c(7, 2)
-sigma <- 10
-y <- X %*% beta_true + rnorm(n, sd=sigma)
+nelson_siegel <- function(tau, gamma){
+    # Tau : Time to maturity
+    # gamma[1] : Beta_0 - Level
+    # gamma[2] : Beta_1 - Slope
+    # gamma[3] : Beta_2 - Curvature
+    # gamma[4] : lambda - Factor of decay
 
-# Prior settings
-tau2 <- 100  # Prior variance for beta
-
-# Burn-in
-burn_in <- 1000
-
-# Metropolis-Hastings Algorithm
-metropolis_hastings <- function(X, y, n_iter = 10000, sigma2 = 100, proposal_sd = 1) {
-  p <- ncol(X)
-  beta_current <- rep(0, p)  # Initialize
-  samples <- matrix(NA, nrow = n_iter, ncol = p)
-  
-  log_posterior <- function(beta) {
-    ll <- sum(dnorm(y, mean = X %*% beta, sd = sqrt(sigma2), log = TRUE))
-    lp <- sum(dnorm(beta, mean = 0, sd = sqrt(tau2), log = TRUE))
-    return(ll + lp)  # Posterior up to constant
-  }
-  
-  for (i in 1:n_iter) {
-    beta_proposal <- beta_current + rnorm(p, mean = 0, sd = proposal_sd)
-    log_acceptance_ratio <- log_posterior(beta_proposal) - log_posterior(beta_current)
-    
-    if (log(runif(1)) < log_acceptance_ratio) {
-      beta_current <- beta_proposal
-    }
-    samples[i, ] <- beta_current
-  }
-  
-  return(samples)
+    # Compute the Nelson-Siegel model
+    y <- gamma[1] + gamma[2] * (1 - exp(-tau / gamma[4])) / (tau / gamma[4]) + gamma[3] * ((1 - exp(-tau / gamma[4])) / (tau / gamma[4]) - exp(-tau / gamma[4]))
 }
 
-# Run MCMC
-samples <- metropolis_hastings(X, y, n_iter = 50000)
 
-# Plot posterior distributions
-par(mfrow = c(1,2))
-hist(samples[burn_in:50000,1], breaks = 30, main = "Posterior of beta0", xlab = "beta0")
-hist(samples[burn_in:50000,2], breaks = 30, main = "Posterior of beta1", xlab = "beta1")
+###############################################################################
+# Simulate the data
+###############################################################################
+
+# Set the parameters
+n <- 1000
+tau <- c(1:120)
+beta <- c(0, 10, 0)
+lambda <- 1
+
+# Simulate the data
+y <- nelson_siegel(tau, c(beta, lambda)) + rnorm(n, sd = 0.1)
+
+# Metropolis-Hastings Algorithm
+metropolis_hastings <- function(y, tau, n_iter = 100, sigma2 = 1, proposal_sd = 1) {
+    p <- 4
+    gamma_current <- rep(0, p)  # Initialize
+    samples <- matrix(NA, nrow = n_iter, ncol = p)
+    
+    log_posterior <- function(gamma) {
+        ll <- sum(dnorm(y, mean = nelson_siegel(tau, gamma), sd = sqrt(sigma2), log = TRUE))
+        lp <- sum(dnorm(gamma, mean = 0, sd = sqrt(sigma2), log = TRUE))
+        return(ll + lp)  # Posterior up to constant
+    }
+    
+    for (i in 1:n_iter) {
+        gamma_proposal <- gamma_current + rnorm(p, mean = 0, sd = proposal_sd)
+        log_acceptance_ratio <- log_posterior(gamma_proposal) - log_posterior(gamma_current)
+            
+        if (is.nan(log_acceptance_ratio)) {
+            log_acceptance_ratio <- - Inf 
+        }
+        
+        if(log(runif(1)) < log_acceptance_ratio) {
+            gamma_current <- gamma_proposal
+        }
+        samples[i, ] <- gamma_current
+    }
+    
+    return(samples)
+}
+
+# 
+n_iter <- 10000
+
+# Run MCMC
+samples <- metropolis_hastings(y, tau, n_iter = n_iter, proposal_sd = 0.1)
+
+# Discard the burn-in
+burn_in <- 0.1
+samples <- samples[round(burn_in * n_iter):n_iter, ]
+
+# Plot the results
+par(mfrow = c(2, 4))
+for(i in 1:4){
+    hist(samples[,i], main = paste("gamma", i), xlab = paste("gamma", i))
+    plot (samples[,i], type = "l", main = paste("gamma", i), xlab = "Iteration", ylab = paste("gamma", i))
+}
+
+
+
+# Plot the Nelson-Siegel curve
+#plot(tau, y, pch = 20, col = "blue", xlab = "Time to Maturity", ylab = "Yield")
+
