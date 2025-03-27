@@ -22,27 +22,36 @@ set.seed(20250324)
 # Import the functions
 source("functions.R")
 
-
 #####################################################################
 # Simulate the data
 #####################################################################
 
 # Set the parameters
-n <- 1000
+n <- 100000
 taus <- c(6,12,24,30,36,48,60,72,84,96,108,180,240,360)
 tau <- sample(taus, n, replace = TRUE)
-beta <- c(3, 10, 7)
+beta <- c(5, -3, 2)
 lambda <- 1
+sigma2 <- 0.1
 
 # Simulate the data
-y <- nelson_siegel(tau, c(beta, lambda)) + rnorm(n, sd = 0)
+y <- nelson_siegel(tau, beta, lambda) + rnorm(n, sd = sigma2)
 
-# Set the number of iterations
+#####################################################################
+# Run the MCMC
+#####################################################################
+
+# Set the simulation parameters
 n_iter <- 10000
-burn_in <- 0.1
+burn_in <- 0.25
+c_proposal <- 0.0001
+sigma_proposal <- 1 * diag(c(1,1,1,1)) * c_proposal
 
 # Run MCMC
-samples <- metropolis_hastings(y, tau, n_iter = n_iter, proposal_sd = 0.2
+metropolis <- metropolis_hastings(y, tau, n_iter = n_iter, sigma_proposal=sigma_proposal)
+samples <- metropolis[,1:4]
+acceptance <- metropolis[,5]
+
 samples <- as.data.frame(samples)
 colnames(samples) <- c("Beta_0", "Beta_1", "Beta_2", "Lambda")
 
@@ -53,7 +62,8 @@ samples <- samples[round(burn_in * n_iter):n_iter, ]
 # Estimate the parameters
 #####################################################################
 
-gamma_hat <- colMeans(samples)
+beta_hat <- colMeans(samples[,1:3])
+lambda_hat <- mean(samples$Lambda)
 
 #####################################################################
 # Plot the results
@@ -64,6 +74,14 @@ plot_hist(samples, " ")
 plot_time_series(samples, " ")
 
 # Plot the Nelson-Siegel curve 
-plot_nelson_siegel(gamma_hat, y, tau, taus, " ")
+plot_nelson_siegel(beta_hat,lambda_hat, y, tau, taus, " ")
 
-print(gamma_hat)
+print(beta_hat)
+print(lambda_hat)
+print(mean(acceptance))
+
+# Print the correlation matrix
+samples_corr <- samples
+samples_corr$Lambda <- log(samples$Lambda)
+samples_corr <- cov(samples)
+print(samples_corr)

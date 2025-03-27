@@ -3,54 +3,83 @@
 ###############################################################################
 
 ###############################################################################
+# Prior, Likelihood, and Posterior
+###############################################################################
+
+# Prior
+log_prior <- function(beta, lambda) {
+    lp <- sum(dnorm(beta, mean = c(0, 0, 0), sd = sqrt(sigma2*100), log = TRUE))
+    lp <- lp + dnorm(log(lambda), mean = 0, sd = sqrt(sigma2*100), log = TRUE)
+    return(lp)  # Prior up to constant
+}
+
+# Log-likelihood
+log_likelihood <- function(beta, lambda) {
+    ll <- sum(dnorm(y, mean = nelson_siegel(tau, beta, lambda), sd = sqrt(sigma2), log = TRUE))
+    return(ll)  # Likelihood up to constant
+}
+
+# Log-posterior
+log_posterior <- function(beta, lambda) {
+    return(log_prior(beta, lambda) + log_likelihood(beta, lambda))
+}
+
+###############################################################################
 # Simulate the data
 ###############################################################################
 
 # Nelson-Siegel Model
-nelson_siegel <- function(tau, gamma){
+nelson_siegel <- function(tau, beta, lambda){
     # Tau : Time to maturity
-    # gamma[1] : Beta_0 - Level
-    # gamma[2] : Beta_1 - Slope
-    # gamma[3] : Beta_2 - Curvature
-    # gamma[4] : lambda - Factor of decay
+    # beta[1] : Beta_0 - Level
+    # beta[2] : Beta_1 - Slope
+    # beta[3] : Beta_2 - Curvature
+    # lambda : lambda - Factor of decay
 
     # Compute the Nelson-Siegel model
-    y <- gamma[1] + gamma[2] * (1 - exp(-tau / gamma[4])) / (tau / gamma[4]) + gamma[3] * ((1 - exp(-tau / gamma[4])) / (tau / gamma[4]) - exp(-tau / gamma[4]))
+    y <- beta[1] + beta[2] * (1 - exp(-tau / lambda)) / (tau / lambda) + beta[3] * ((1 - exp(-tau / lambda)) / (tau / lambda) - exp(-tau / lambda))
 }
 
-
 # Metropolis-Hastings Algorithm
-metropolis_hastings <- function(y, tau, n_iter = 100, sigma2 = 1, proposal_sd = 1) {
+metropolis_hastings <- function(y, tau, n_iter = 100, sigma_proposal = diag(c(1,1,1,1))) {
     p <- 4
-    gamma_current <- rep(0, p)  # Initialize
-    samples <- matrix(NA, nrow = n_iter, ncol = p)
-    
-    log_posterior <- function(gamma) {
-        ll <- sum(dnorm(y, mean = nelson_siegel(tau, gamma), sd = sqrt(sigma2), log = TRUE))
-        lp <- sum(dnorm(gamma, mean = 0, sd = sqrt(sigma2), log = TRUE))
-        return(ll + lp)  # Posterior up to constant
-    }
+
+    beta_current <- rnorm(p - 1, mean = 0, sd = 1)
+    lambda_current <- exp(rnorm(1, mean = 0, sd = 1))
+
+    samples <- matrix(NA, nrow = n_iter, ncol = p+1)
     
     for (i in 1:n_iter) {
-        beta_proposal <- gamma_current[1:p-1] + rnorm(p-1, mean = 0, sd = proposal_sd)
-        lambda_proposal <- (sqrt(gamma_current[p]) + rnorm(1, mean = 0, sd = proposal_sd))**2
+      
+        step <- mvrnorm(1, mu = rep(0, p), Sigma = sigma_proposal)
 
-        gamma_proposal <- c(beta_proposal, lambda_proposal)
-        log_acceptance_ratio <- log_posterior(gamma_proposal) - log_posterior(gamma_current)
+        beta_proposal <- beta_current + step[1:(p-1)]
+        lambda_proposal <- exp(log(lambda_current) + step[p])
+        accepted_proposal <- 0
+
+        log_acceptance_ratio <- log_posterior(beta_proposal, lambda_proposal) - log_posterior(beta_current, lambda_current)
             
         if (is.nan(log_acceptance_ratio)) {
             print(paste("Iteration", i, ":", "NaN"))
-            print(paste("     log_posterior(gamma_proposal) : ", log_posterior(gamma_proposal)))
-            print(paste("     log_posterior(gamma_current) : ", log_posterior(gamma_current)))
-            print(paste("     gamma_proposal : ", gamma_proposal))
-            print(paste("     gamma_current : ", gamma_current))
+            print(paste("     beta_proposal, lambda_proposal : ", beta_proposal[1], beta_proposal[2], beta_proposal[3], lambda_proposal))
+            print(paste("     beta_current, lambda_current : ", beta_current[1], beta_current[2], beta_current[3], lambda_current))
+            print(paste("     log_posterior(beta_proposal, lambda_proposal) : ", log_posterior(beta_proposal, lambda_proposal)))
+            print(paste("           log_prior(beta_proposal, lambda_proposal) : ", log_prior(beta_proposal, lambda_proposal)))
+            print(paste("           log_likelihood(beta_proposal, lambda_proposal) : ", log_likelihood(beta_proposal, lambda_proposal)))
+            print(paste("     log_posterior(beta_current, lambda_current) : ", log_posterior(beta_current, lambda_current)))
+            print(paste("           log_prior(beta_current, lambda_current) : ", log_prior(beta_current, lambda_current)))
+            print(paste("           log_likelihood(beta_current, lambda_current) : ", log_likelihood(beta_current, lambda_current)))
             log_acceptance_ratio <- - Inf 
         }
         
         if(log(runif(1)) < log_acceptance_ratio) {
-            gamma_current <- gamma_proposal
+            beta_current <- beta_proposal
+            lambda_current <- lambda_proposal
+            accepted_proposal <- 1
         }
-        samples[i, ] <- gamma_current
+        samples[i, 1:3] <- beta_current
+        samples[i, 4] <- lambda_current
+        samples[i, 5] <- accepted_proposal
     }
     
     return(samples)
@@ -134,10 +163,10 @@ plot_time_series <- function(data, title) {
 }
 
 # Plot the Nelson-Siegel curve and the data points
-plot_nelson_siegel <- function(gamma_hat, y, tau, taus, title) {
+plot_nelson_siegel <- function(beta_hat,lambda_hat, y, tau, taus, title) {
     # Plot the Nelson-Siegel curve and the data points
     if(title != " "){            
-        gg <- ggplot(data.frame(tau = taus, y = nelson_siegel(taus, gamma_hat)), aes(x = tau, y = y)) +
+        gg <- ggplot(data.frame(tau = taus, y = nelson_siegel(taus, beta_hat,lambda_hat)), aes(x = tau, y = y)) +
             geom_line(size = 1.5, color = "#1E88E5") +
             geom_point(aes(y = y), data = data.frame(tau = tau, y = y), color = "red", size = 3) +
             theme_bw(base_size = 25) +
@@ -152,7 +181,7 @@ plot_nelson_siegel <- function(gamma_hat, y, tau, taus, title) {
         print(gg)
         ggsave("figures/nelson_siegel_curve.png", gg, width = 10, height = 10)
     } else {            
-        gg <- ggplot(data.frame(tau = taus, y = nelson_siegel(taus,gamma_hat)), aes(x = tau, y = y)) +
+        gg <- ggplot(data.frame(tau = taus, y = nelson_siegel(taus,beta_hat,lambda_hat)), aes(x = tau, y = y)) +
             geom_line(size = 1.5, color = "#1E88E5") +
             geom_point(aes(y = y), data = data.frame(tau = tau, y = y), color = "red", size = 3) +
             theme_bw(base_size = 25) +
